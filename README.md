@@ -16,5 +16,17 @@ This script is my attempt to remedy this problem, making stuff like the above re
 ### Usage
 You can use this script just like you would use xrandr, except that instead of specifying what you want *changed*, you specify the *end result*. So, let's say that you'd normally tell xrandr to `--output DP-1 --auto --primary --rotate left`. Xrandr would try to enable the DP-1 output in *addition* to what you already have set up. Xrandr-wrapper, on the other hand, will try to end up with DP-1 being the *only* output enabled.
 
+For the example above, I'd probably use xrandr like this:
+
+    xrandr --output DP-0 --auto --primary --right-of LVDS-0
+    xrandr --output LVDS-0 --off
+    xrandr --output DP-1 --auto --right-of DP-0
+
+But, using xrandr-wrapper, I'll just do this instead:
+
+    xrandr-wrapper --output DP-0 --auto --primary --output DP-1 --auto --right-of DP-0
+    
+And `xrandr-wrapper` would figure out to disable LVDS-0 in the process itself.
+
 ### Why not disper?
 Good question. Last time I used disper, it seemed to skip xrandr completely and communicate directly with the nvidia driver. Sadly, it wasn't as good at for example rotating outputs as xrandr is. When the proprietary nvidia driver started supporting xrandr. I threw disper out the door, and I've never looked back.
