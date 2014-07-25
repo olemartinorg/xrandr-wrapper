@@ -1,0 +1,192 @@
+#!/usr/bin/env python
+
+import re
+import os
+import sys
+import time
+import subprocess
+
+
+class Output:
+    """
+        A class that describes an output, and contains its properties
+    """
+
+    name = None
+    connected = False
+    primary = False
+    resolution = None
+    offset = None
+    rotation = None
+    physical = None
+
+    def __str__(self):
+        return str({
+            'name': self.name,
+            'connected': self.connected,
+            'primary': self.primary,
+            'resolution': self.resolution,
+            'offset': self.offset,
+            'rotation': self.rotation,
+            'physical': self.physical,
+        })
+
+    def is_on(self):
+        return bool(self.resolution)
+
+    def is_connected(self):
+        return self.connected
+
+
+def query():
+    """
+        Query xrandr and return a dict of Output objects (with their names as keys)
+    """
+    regex = re.compile(
+        r'([A-Z0-9\-]+)\s+' +                                # The output name
+        r'(connected|disconnected|unknown connection)\s*' +  # If it is connected or not
+        r'(primary)?\s*' +                                   # If it is primary or not
+        r'(\d+x\d+)?([\+\-]\d+[\+\-]\d+)?\s*' +              # The current resolution and offset
+        r'(normal|left|inverted|right)?\s*' +                # Rotation
+        r'\(.*?\)\s*' +                                      # Don't know exactly what this part is
+        r'(\d+mm x \d+mm)?'                                  # Physical size
+    )
+    process = subprocess.Popen('xrandr -q', shell=True, stdout=subprocess.PIPE)
+    process.wait()
+    result = str(process.stdout.read())
+    out = {}
+    for elm in regex.findall(result):
+        output = Output()
+        output.name = elm[0]
+        output.connected = True if elm[1] == 'connected' else False
+        output.primary = True if elm[2] == 'primary' else False
+        output.resolution = elm[3] if elm[3] else None
+        output.offset = elm[4] if elm[4] else None
+        output.rotation = elm[5] if elm[5] else 'normal'
+        output.physical = elm[6] if elm[6] else None
+        out[output.name] = output
+
+    return out
+
+
+def parse_args(argv):
+    """
+        Parse the argv and return list of displays the user wants to have turned on
+    """
+    all = []
+    off = []
+    arguments = {}
+
+    current = None
+    output_is_next = False
+    for arg in argv[1:]:
+        if arg == '--output':
+            output_is_next = True
+            continue
+        elif output_is_next:
+            current = arg
+            all.append(arg)
+            output_is_next = False
+            continue
+        elif arg == '--off':
+            off.append(current)
+        elif current and current in arguments:
+            arguments[current].append(arg)
+        elif current:
+            arguments[current] = [arg]
+
+    on = []
+
+    for output in all:
+        if output not in off:
+            on.append(output)
+
+    return on, arguments
+
+
+def prepare(on, available, arguments):
+    """
+        Prepare to run the supplied xrandr parameters by turning off the monitors
+        we don't need, while keeping at least one of them on at all times (to keep
+        Xorg from giving up and restarting). Will have 2 monitors on at most (as
+        my Nvidia card doesnt support any more).
+    """
+
+    already_on = None
+
+    for output in on:
+        if output in available and available[output].is_on():
+            already_on = output
+            break
+
+    if already_on:
+        # At least one of the displays are already on, so let's just turn off
+        # all the others
+        turn_off = []
+        for output in available.values():
+            if output.is_on() and not output.name in on:
+                turn_off.append('--output '+output.name+' --off')
+        run(' '.join(turn_off))
+
+    else:
+        # None of the monitors we want to have turned on are already on, so
+        # we pick two (one of the monitors we want to turn on, and one of the
+        # ones we want to turn off, and use that bridge as our way out)
+        want_on = on[0]
+        want_off = None
+        the_rest = []
+
+        for name, output in available.items():
+            if output.is_on() and want_off is None:
+                want_off = name
+            elif output.is_on():
+                the_rest.append(name)
+
+        # Let's turn all others off first
+        turn_the_rest_off = []
+        for output in the_rest:
+            turn_the_rest_off.append('--output '+output+' --off')
+        run(' '.join(turn_the_rest_off))
+
+        # Now turn want_on on
+        run('--output %s --auto' % want_on)
+
+        # And turn want_off off
+        run('--output %s --off' % want_off)
+
+
+def run(args):
+    """
+        Runs xrandr with the supplied arguments
+    """
+    if not args.strip():
+        return
+    devnull = open(os.devnull, 'w')
+    subprocess.Popen('xrandr '+args,
+                     shell=True,
+                     stdout=devnull,
+                     stderr=devnull)
+
+
+def main():
+    """
+        Main function, wrap it all up and run the program
+    """
+    on, arguments = parse_args(sys.argv)
+    outputs = query()
+
+    if len(on) == 0:
+        print('You should at least keep one output on, silly')
+        return
+
+    for output in on:
+        if not outputs[output].is_connected():
+            print('%s is not connected' % output)
+            return
+
+    prepare(on, outputs, arguments)
+    run(' '.join(sys.argv[1:]))
+
+
+if __name__ == '__main__':
+    main()
